@@ -1,0 +1,33 @@
+rules_version = '2';
+
+// ⚠️ تێبینی گرنگ: ئەم rules‌انە سیستەمی login‌ی ڕاستەقینەیان تێدا نییە،
+// چونکە panel/سکانەر/ئەپی باوان هیچکامیان Firebase Authentication بەکارناهێنن.
+// ئەمانە تەنیا "لای کەمترین زیان" ڕێکخراون. بۆ ئاسایشی تەواو، پێویستە
+// panel و سکانەر بە Firebase Auth (email/password یان admin login) پارێزراو بکرێن،
+// و ئەم rules‌انە دواتر بگۆڕدرێن بۆ داواکردنی request.auth.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /students/{cardId} {
+      // پێویستە باوان بتوانێت بخوێنێتەوە بۆ لینککردن بە RFID
+      allow read: if true;
+      // تەنیا لە panel‌ەوە دەبێت بنووسرێت - ئێستا کراوەیە، پێویستە بە Auth پارێزراو بکرێت
+      allow write: if true;
+
+      match /parentTokens/{token} {
+        allow read: if false; // تەنیا Cloud Function (Admin SDK) پێویستی بە خوێندنەوەیە
+        allow create: if request.resource.data.keys().hasOnly(['createdAt']);
+        allow update: if false;
+        allow delete: if true; // ئەپی باوان دەتوانێت تۆکنی خۆی بسڕێتەوە کاتێک unlink دەکات
+      }
+    }
+
+    match /attendance/{day}/records/{cardId} {
+      // باوان و panel پێویستیان بە خوێندنەوەیە بۆ نیشاندانی دۆخ بە شێوەی زیندوو
+      allow read: if true;
+      // تەنیا سکانەر/panel دەبێت بنووسن - ئێستا کراوەیە، پێویستە بە Auth پارێزراو بکرێت
+      allow write: if true;
+    }
+  }
+}
