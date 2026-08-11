@@ -199,8 +199,8 @@
 <div class="modal-overlay" id="add-modal">
   <div class="modal-sheet">
     <h3>زیادکردنی منداڵ</h3>
-    <p class="hint">ژمارەی کارتی RFID‌ی منداڵەکەت بنووسە (لە قوتابخانەوە پێت دراوە).</p>
-    <input type="text" id="add-card-input" placeholder="ژمارەی کارت" inputmode="numeric" autofocus>
+    <p class="hint">کۆدی پەیوەستکردنی منداڵەکەت بنووسە (لە قوتابخانەوە پێت دراوە).</p>
+    <input type="text" id="add-card-input" placeholder="کۆدی پەیوەستکردن (٦ ژمارە)" inputmode="numeric" autofocus>
     <div class="err" id="add-error"></div>
     <div class="modal-actions">
       <button class="btn-secondary" id="add-cancel">پاشگەزبوونەوە</button>
@@ -211,7 +211,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, serverTimestamp, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getMessaging, getToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging.js";
 
 const firebaseConfig = {
@@ -357,15 +357,22 @@ document.getElementById('add-card-input').addEventListener('keydown', (e) => { i
 async function addChild() {
   const input = document.getElementById('add-card-input');
   const errEl = document.getElementById('add-error');
-  const cardId = input.value.trim();
-  if (!cardId) { errEl.textContent = 'تکایە ژمارەی کارت بنووسە'; return; }
-  if (linkedCardIds.includes(cardId)) { errEl.textContent = 'ئەم منداڵە پێشتر زیادکراوە'; return; }
+  const linkCode = input.value.trim();
+  if (!linkCode) { errEl.textContent = 'تکایە کۆدی پەیوەستکردن بنووسە'; return; }
 
   document.getElementById('add-confirm').innerHTML = '<span class="loading-spinner"></span>';
   try {
-    const snap = await getDoc(doc(db, "students", cardId));
-    if (!snap.exists()) {
-      errEl.textContent = 'هیچ قوتابییەک بەم ژمارەی کارتە نەدۆزرایەوە';
+    const q = query(collection(db, "students"), where("linkCode", "==", linkCode));
+    const results = await getDocs(q);
+    if (results.empty) {
+      errEl.textContent = 'هیچ قوتابییەک بەم کۆدە نەدۆزرایەوە';
+      document.getElementById('add-confirm').textContent = 'زیادکردن';
+      return;
+    }
+    const snap = results.docs[0];
+    const cardId = snap.id;
+    if (linkedCardIds.includes(cardId)) {
+      errEl.textContent = 'ئەم منداڵە پێشتر زیادکراوە';
       document.getElementById('add-confirm').textContent = 'زیادکردن';
       return;
     }
@@ -377,6 +384,7 @@ async function addChild() {
     showToast(`${snap.data().name} زیادکرا ✅`);
     if (notifPermissionGranted) registerTokenForStudent(cardId);
   } catch (e) {
+    console.error(e);
     errEl.textContent = 'کێشەی پەیوەندی، دووبارە هەوڵ بدەوە';
   } finally {
     document.getElementById('add-confirm').textContent = 'زیادکردن';
