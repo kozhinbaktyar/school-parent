@@ -211,20 +211,19 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getDatabase, ref, get, child, set, remove, onValue, off } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+import { getDatabase, ref, get, set, remove, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 import { getMessaging, getToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAsDs_tQemRJwwjH0m8U2YvlqZjWXHEO0k",
   authDomain: "test-school-53999.firebaseapp.com",
-  databaseURL: "https://test-school-53999-default-rtdb.firebaseio.com", // دڵنیابەرەوە لە ڕاستیی ئادڕەسی RTDB لە کۆنسۆڵەکەت
+  databaseURL: "https://test-school-53999-default-rtdb.firebaseio.com", // ⚠️ دڵنیابەرەوە لینکەکە هەمان Realtime Databaseی خۆت بێت
   projectId: "test-school-53999",
   storageBucket: "test-school-53999.firebasestorage.app",
   messagingSenderId: "847312056047",
   appId: "1:847312056047:web:44f84a1bb21e49d0b7751a"
 };
 
-// ⚠️ پێویستە ئەم کلیلە بگۆڕیت: Firebase Console → Project settings → Cloud Messaging → Web Push certificates
 const VAPID_KEY = "PASTE_YOUR_VAPID_KEY_HERE";
 
 const app = initializeApp(firebaseConfig);
@@ -246,7 +245,7 @@ const STATUS_LABELS = {
 };
 
 let linkedCardIds = JSON.parse(localStorage.getItem('linkedStudents') || '[]');
-const subscriptions = new Map(); // cardId -> { studentRef, attendanceRef }
+const subscriptions = new Map(); // cardId -> { unsubStudent, unsubAttendance }
 let currentDay = getTodayStr();
 let messaging = null;
 let notifPermissionGranted = Notification && Notification.permission === 'granted';
@@ -291,8 +290,8 @@ function subscribeChild(cardId) {
   if (subscriptions.has(cardId)) return;
   const card = ensureChildCard(cardId);
 
-  const studentRef = ref(db, `students/${cardId}`);
-  onValue(studentRef, (snap) => {
+  // خوێندنەوە لە Realtime Database بۆ زانیاری قوتابی
+  const unsubStudent = onValue(ref(db, `students/${cardId}`), (snap) => {
     if (!snap.exists()) {
       card.querySelector('.c-name').textContent = "قوتابی نەدۆزرایەوە";
       return;
@@ -303,27 +302,31 @@ function subscribeChild(cardId) {
     card.querySelector('.child-photo').src = data.imageUrl || PLACEHOLDER_IMG;
   }, (err) => console.error(err));
 
-  const attendanceRef = ref(db, `attendance/${currentDay}/records/${cardId}`);
-  onValue(attendanceRef, (snap) => {
-    const val = snap.exists() ? snap.val() : null;
-    const status = val ? val.status : null;
-    const info = STATUS_LABELS[status];
-    card.className = 'child-card' + (status ? ` st-${status}` : '');
-    card.querySelector('.c-status').textContent = info ? info.label : 'هێشتا نەگەیشتووە / تۆمار نەکراوە';
-    const time = val && val.time ? new Date(val.time) : null;
-    card.querySelector('.c-time').textContent = time
-      ? `کاتژمێر ${time.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
-      : '';
-  }, (err) => console.error(err));
+  // خوێندنەوە لە Realtime Database بۆ دۆخی ئامادەبوون
+  const unsubAttendance = onValue(
+    ref(db, `attendance/${currentDay}/records/${cardId}`),
+    (snap) => {
+      const data = snap.exists() ? snap.val() : null;
+      const status = data ? data.status : null;
+      const info = STATUS_LABELS[status];
+      card.className = 'child-card' + (status ? ` st-${status}` : '');
+      card.querySelector('.c-status').textContent = info ? info.label : 'هێشتا نەگەیشتووە / تۆمار نەکراوە';
+      const time = data && data.time ? new Date(data.time) : null;
+      card.querySelector('.c-time').textContent = time
+        ? `کاتژمێر ${time.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
+        : '';
+    },
+    (err) => console.error(err)
+  );
 
-  subscriptions.set(cardId, { studentRef, attendanceRef });
+  subscriptions.set(cardId, { unsubStudent, unsubAttendance });
 }
 
 function unsubscribeChild(cardId) {
   const subs = subscriptions.get(cardId);
   if (subs) { 
-    off(subs.studentRef); 
-    off(subs.attendanceRef); 
+    if (typeof subs.unsubStudent === 'function') subs.unsubStudent(); 
+    if (typeof subs.unsubAttendance === 'function') subs.unsubAttendance(); 
     subscriptions.delete(cardId); 
   }
   const card = document.getElementById(`child-${cardId}`);
@@ -366,16 +369,16 @@ async function addChild() {
 
   document.getElementById('add-confirm').innerHTML = '<span class="loading-spinner"></span>';
   try {
-    // گەڕان لە ناو قوتابییەکان بەپێی linkCode بۆ دۆزینەوەی cardId لە Realtime DB
+    // گەڕان بەدوای linkCode لە Realtime Database
     const studentsSnap = await get(ref(db, "students"));
     let foundCardId = null;
     let foundData = null;
 
     if (studentsSnap.exists()) {
       const allStudents = studentsSnap.val();
-      for (const [cId, sData] of Object.entries(allStudents)) {
-        if (sData.linkCode && String(sData.linkCode) === String(linkCode)) {
-          foundCardId = cId;
+      for (const [cardId, sData] of Object.entries(allStudents)) {
+        if (sData.linkCode === linkCode || cardId === linkCode) {
+          foundCardId = cardId;
           foundData = sData;
           break;
         }
@@ -415,12 +418,12 @@ async function removeChild(cardId) {
   saveLinked();
   unsubscribeChild(cardId);
   renderEmptyState();
-  // هەوڵدان بۆ سڕینەوەی تۆکنی ئاگادارکردنەوە
+  
   try {
     const token = localStorage.getItem('fcmToken');
     if (token) {
-      const tokenClean = token.replace(/[.#$\[\]]/g, '_');
-      await remove(ref(db, `students/${cardId}/parentTokens/${tokenClean}`));
+      // سڕینەوە لە Realtime Database
+      await remove(ref(db, `students/${cardId}/parentTokens/${token}`));
     }
   } catch (e) { /* گرنگ نییە */ }
 }
@@ -467,11 +470,11 @@ async function registerTokenForStudent(cardId, tokenOverride) {
   const token = tokenOverride || localStorage.getItem('fcmToken');
   if (!token) return;
   try {
-    // پیتە نەگونجاوەکان پاکدەکرێنەوە بۆ نووسین لە کلیلی RTDB
-    const tokenClean = token.replace(/[.#$\[\]]/g, '_');
-    await set(ref(db, `students/${cardId}/parentTokens/${tokenClean}`), { 
+    // تۆمارکردن لە Realtime Database
+    const cleanTokenKey = token.replace(/[.#$\[\]]/g, "_"); // RTDB ڕێگە بە کارەکتەری Taybet نادات لە Key
+    await set(ref(db, `students/${cardId}/parentTokens/${cleanTokenKey}`), {
       token: token,
-      createdAt: new Date().toISOString() 
+      createdAt: new Date().toISOString()
     });
   } catch (e) { console.error('نەتوانرا تۆکن تۆمار بکرێت:', e); }
 }
